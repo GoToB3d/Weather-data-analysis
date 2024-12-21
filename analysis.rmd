@@ -1,3 +1,107 @@
 ```{r}
+# 加载所需的库
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
 
+# 读取数据
+data <- read.csv("Weather_Data_All_Cities.csv")
+
+# 查看数据结构
+head(data)
+
+# 1. 数据清洗
+
+# 1.1 处理日期数据
+data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
+
+# 1.2 清理天气数据，分为白天和夜间的天气
+data <- data %>%
+  mutate(Day_Weather = strsplit(as.character(Weather.Condition), "/")[[1]][1],
+         Night_Weather = strsplit(as.character(Weather.Condition), "/")[[1]][2])
+
+# 1.3 清理温度数据，去除单位，转换为数值类型
+data <- data %>%
+  mutate(Day_Temperature = as.numeric(gsub("℃", "", strsplit(as.character(Temperature), "/")[[1]][1])),
+         Night_Temperature = as.numeric(gsub("℃", "", strsplit(as.character(Temperature), "/")[[1]][2])))
+
+# 1.4 清理风力和风向数据，分为白天和夜间的风力风向
+data <- data %>%
+  mutate(Day_Wind_Force = strsplit(as.character(`Wind Force and Direction`), "/")[[1]][1],
+         Night_Wind_Force = strsplit(as.character(`Wind Force and Direction`), "/")[[1]][2])
+
+# 1.5 提取风向数据
+data$Day_Wind_Direction <- gsub("\\d+", "", data$Day_Wind_Force)
+data$Night_Wind_Direction <- gsub("\\d+", "", data$Night_Wind_Force)
+
+# 查看数据清洗后的效果
+head(data)
+
+# 2. 数据分析 (EDA)
+
+# 2.1 基本统计描述
+summary(data)
+
+# 2.2 温度数据的描述性统计
+summary(data$Day_Temperature)
+summary(data$Night_Temperature)
+
+# 2.3 计算温度之间的相关性
+cor(data$Day_Temperature, data$Night_Temperature, use = "complete.obs")
+
+# 2.4 按城市分组的统计分析
+city_weather_summary <- data %>%
+  group_by(City) %>%
+  summarise(Avg_Day_Temperature = mean(Day_Temperature, na.rm = TRUE),
+            Avg_Night_Temperature = mean(Night_Temperature, na.rm = TRUE),
+            Most_Common_Day_Weather = Mode(Day_Weather),   # Mode 是找众数的函数，需要你自己定义
+            Most_Common_Night_Weather = Mode(Night_Weather))
+
+print(city_weather_summary)
+
+# 2.5 风力风向的分布
+ggplot(data, aes(x = Day_Wind_Force)) +
+  geom_bar() +
+  ggtitle("Day Wind Force Distribution")
+
+ggplot(data, aes(x = Night_Wind_Force)) +
+  geom_bar() +
+  ggtitle("Night Wind Force Distribution")
+
+# 2.6 温度变化趋势 (时间序列分析)
+ggplot(data, aes(x = Date)) +
+  geom_line(aes(y = Day_Temperature, color = "Day Temp")) +
+  geom_line(aes(y = Night_Temperature, color = "Night Temp")) +
+  labs(title = "Temperature Trend Over Time", x = "Date", y = "Temperature (°C)") +
+  scale_color_manual(name = "Temperature", values = c("Day Temp" = "blue", "Night Temp" = "red"))
+
+# 2.7 不同城市的温度分布
+ggplot(data, aes(x = Day_Temperature, fill = City)) +
+  geom_histogram(binwidth = 2, alpha = 0.6, position = "identity") +
+  ggtitle("Day Temperature Distribution by City")
+
+# 2.8 白天和夜间天气情况的条形图
+ggplot(data, aes(x = Day_Weather)) +
+  geom_bar() +
+  ggtitle("Day Weather Distribution")
+
+ggplot(data, aes(x = Night_Weather)) +
+  geom_bar() +
+  ggtitle("Night Weather Distribution")
+
+# 3. 风力风向的分析
+
+# 3.1 风向数据统计
+day_wind_direction_count <- table(data$Day_Wind_Direction)
+night_wind_direction_count <- table(data$Night_Wind_Direction)
+
+print(day_wind_direction_count)
+print(night_wind_direction_count)
+
+# 4. 提示：你可以自定义“众数”函数
+# 用于统计每个变量的众数
+Mode <- function(x) {
+  uniqx <- unique(x)
+  uniqx[which.max(tabulate(match(x, uniqx)))]
+}
 ```
