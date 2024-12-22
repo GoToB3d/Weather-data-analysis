@@ -1,5 +1,5 @@
 ---
-title: "Prokect"
+title: "Project"
 author: "Qingdian Luo 2021013514"
 output:
   pdf_document:
