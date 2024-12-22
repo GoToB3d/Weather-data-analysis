@@ -22,10 +22,49 @@ data$Date <- as.Date(data$Date)
 # Extract month and year for time-based analysis
 data$Year <- year(data$Date)
 data$Month <- month(data$Date)
-
+data$Season <- case_when(
+  data$Month %in% 3:5  ~ "Spring",
+  data$Month %in% 6:8  ~ "Summer",
+  data$Month %in% 9:11 ~ "Autumn",
+  TRUE               ~ "Winter"
+)
 # For temperature, you may need to clean/remove the "℃" symbol and convert them to numeric values
 data$Day.Temp <- as.numeric(gsub("℃", "", data$Day.Temp))
 data$Night.Temp <- as.numeric(gsub("℃", "", data$Night.Temp))
+
+
+data <- data %>%
+  filter(Day.Weather != "" & Day.Weather != "-") %>%
+  filter(Night.Weather != "" & Night.Weather != "-") %>%
+  filter(Day.Wind.Force != "Unknown" & Night.Wind.Force != "Unknown")
+
+
+# Function to categorize wind force levels
+categorize_wind_force <- function(force) {
+  if (force == "Unknown") {
+    return("0")
+  } else if (grepl("≤3级|3级|1-2级", force)) {
+    return("0-3")
+  } else if (grepl("3-4级|4级|4-5级|5-6级|5级|6级", force)) {
+    return("3-6")
+  } else if (grepl("6-7级|8-9级|7-8级", force)) {
+    return("6-9")
+  } else if (grepl("9-10级|10-11级|11-12级", force)) {
+    return("9-12")
+  } else {
+    return(NA)
+  }
+}
+
+# Apply the function to both Day_Wind_Force and Night_Wind_Force columns
+data <- data %>%
+  mutate(
+    Day_Wind_Force_Category = sapply(Day.Wind.Force, categorize_wind_force),
+    Night_Wind_Force_Category = sapply(Night.Wind.Force, categorize_wind_force)
+  )
+
+# View the updated dataframe
+print(head(data))
 ```
 
 
@@ -45,15 +84,19 @@ summary_stats <- data %>%
   )
 print(summary_stats)
 
-# Summary statistics for Wind Force
-# Assuming you have numerical values for wind force, otherwise, you might need to convert them
-# For simplicity, we assume a placeholder conversion function for wind force (e.g., '≤3级' as 3).
-data$Day.Wind.Force <- gsub("级", "", data$Day.Wind.Force)
-data$Night.Wind.Force <- gsub("级", "", data$Night.Wind.Force)
 
-# Convert wind force to numeric (assumes categories like '≤3级', '3-4级', etc.)
-data$Day.Wind.Force <- as.numeric(ifelse(data$Day.Wind.Force == "≤3", 3, ifelse(data$Day.Wind.Force == "3-4", 4, NA)))
-data$Night.Wind.Force <- as.numeric(ifelse(data$Night.Wind.Force == "≤3", 3, ifelse(data$Night.Wind.Force == "3-4", 4, NA)))
+# Combine both Day and Night wind force categories into one column for analysis
+df_long <- data %>%
+  gather(key = "Time_of_Day", value = "Wind_Force_Category", Day_Wind_Force_Category, Night_Wind_Force_Category)
+
+# Summary statistics: count of wind force categories per city
+summary_stats <- df_long %>%
+  group_by(City, Wind_Force_Category) %>%
+  summarise(Count = n()) %>%
+  arrange(City, Wind_Force_Category)
+
+# Print summary statistics
+print(summary_stats)
 
 # Wind force summary statistics
 wind_stats <- data %>%
@@ -71,34 +114,151 @@ print(wind_stats)
 
 
 ```{r}
-# Average temperature by month for each city
 temperature_by_month <- data %>%
   group_by(City, Month) %>%
   summarise(
     Average_Day_Temperature = mean(Day.Temp, na.rm = TRUE),
     Average_Night_Temperature = mean(Night.Temp, na.rm = TRUE)
-  )
+  ) %>%
+  mutate(Day_Night_Temp_Difference = Average_Day_Temperature - Average_Night_Temperature)
 
-# Plot temperature over time for each city
-ggplot(temperature_by_month, aes(x = Month, y = Average_Day_Temperature, color = City)) +
-  geom_line() +
-  labs(title = "Average Day Temperature by Month for Each City", x = "Month", y = "Average Day Temperature (℃)") +
-  theme_minimal()
-
-# Yearly temperature trend for each city
+# Calculate yearly averages and temperature difference
 temperature_by_year <- data %>%
   group_by(City, Year) %>%
   summarise(
     Average_Day_Temperature = mean(Day.Temp, na.rm = TRUE),
     Average_Night_Temperature = mean(Night.Temp, na.rm = TRUE)
-  )
+  ) %>%
+  mutate(Day_Night_Temp_Difference = Average_Day_Temperature - Average_Night_Temperature)
+```
 
-# Plot yearly temperature trend
-ggplot(temperature_by_year, aes(x = Year, y = Average_Day_Temperature, color = City)) +
-  geom_line() +
-  labs(title = "Average Day Temperature by Year for Each City", x = "Year", y = "Average Day Temperature (℃)") +
+
+```{r}
+# Reshape temperature_by_month for plotting
+temperature_long_city <- temperature_by_month %>%
+  pivot_longer(
+    cols = c(Average_Day_Temperature, Average_Night_Temperature, Day_Night_Temp_Difference),
+    names_to = "Temperature_Type",
+    values_to = "Temperature"
+  )
+# Boxplots for Day, Night, and Difference by City
+ggplot(temperature_long_city, aes(x = City, y = Temperature, fill = Temperature_Type)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 1) +
+  facet_wrap(~ Temperature_Type, scales = "free_y", nrow = 3, 
+             labeller = labeller(Temperature_Type = c(
+               "Average_Day_Temperature" = "Day Temperature",
+               "Average_Night_Temperature" = "Night Temperature",
+               "Day_Night_Temp_Difference" = "Day-Night Difference"
+             ))) +
+  labs(
+    title = "Temperature Distribution by City",
+    x = "City",
+    y = "Temperature (℃)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+```{r}
+# Plot Day and Night Temperature by Month
+ggplot(temperature_by_month) +
+  geom_line(aes(x = Month, y = Average_Day_Temperature, color = City), linetype = "solid", size = 1) +
+  geom_line(aes(x = Month, y = Average_Night_Temperature, color = City), linetype = "dotted", size = 1) +
+  labs(
+    title = "Day and Night Temperature by Month for Each City",
+    x = "Month",
+    y = "Temperature (℃)",
+    color = "City"
+  ) +
+  theme_minimal()
+
+# Plot Day-Night Temperature Difference by Month
+ggplot(temperature_by_month, aes(x = Month, y = Day_Night_Temp_Difference, color = City)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Day-Night Temperature Difference by Month for Each City",
+    x = "Month",
+    y = "Temperature Difference (℃)",
+    color = "City"
+  ) +
   theme_minimal()
 ```
+
+
+
+```{r}
+# Plot Day and Night Temperature by Year
+ggplot(temperature_by_year) +
+  geom_line(aes(x = Year, y = Average_Day_Temperature, color = City), linetype = "solid", size = 1) +
+  geom_line(aes(x = Year, y = Average_Night_Temperature, color = City), linetype = "dotted", size = 1) +
+  labs(
+    title = "Day and Night Temperature by Year for Each City",
+    x = "Year",
+    y = "Temperature (℃)",
+    color = "City"
+  ) +
+  theme_minimal()
+
+# Plot Day-Night Temperature Difference by Year
+ggplot(temperature_by_year, aes(x = Year, y = Day_Night_Temp_Difference, color = City)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Day-Night Temperature Difference by Year for Each City",
+    x = "Year",
+    y = "Temperature Difference (℃)",
+    color = "City"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+day_weather_counts <- data %>%
+  group_by(City, Day.Weather) %>%
+  tally() %>%
+  ungroup()
+
+night_weather_counts <- data %>%
+  group_by(City, Night.Weather) %>%
+  tally() %>%
+  ungroup()
+
+
+# Function to plot pie chart for weather conditions by city
+plot_pie_chart <- function(data, city, weather_column, title) {
+  city_data <- data %>% filter(City == city)
+  p <- ggplot(city_data, aes(x = "", y = n, fill = !!sym(weather_column))) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = paste(title, "for", city), fill = weather_column) +
+    theme_void() 
+  return(p)
+}
+
+# Example: Plot pie chart for the first city in the dataset (you can loop for all cities)
+cities <- unique(data$City)
+
+# Create a list of plots for all cities
+plots <- list()
+
+# Loop through cities to plot pie charts for Day and Night weather conditions
+
+for (city in cities) {
+  # Day Weather Pie Chart
+  day_plot <- plot_pie_chart(day_weather_counts, city, "Day.Weather", "Day Weather Condition")
+  print(day_plot)
+  
+  # Night Weather Pie Chart
+  night_plot <- plot_pie_chart(night_weather_counts, city, "Night.Weather", "Night Weather Condition")
+  print(night_plot)
+}
+```
+
+
 
 ```{r}
 # Count the occurrences of each weather condition (Day and Night) by city
@@ -114,7 +274,10 @@ weather_condition_night <- data %>%
 ggplot(weather_condition_day, aes(x = Day.Weather, y = Count, fill = City)) +
   geom_bar(stat = "identity", position = "dodge") +
   labs(title = "Weather Condition Occurrences During Day for Each City", x = "Weather Condition", y = "Count") +
-  theme_minimal()
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10) # Rotate labels by 45 degrees
+  )
 
 ggplot(weather_condition_night, aes(x = Night.Weather, y = Count, fill = City)) +
   geom_bar(stat = "identity", position = "dodge") +
@@ -126,20 +289,100 @@ ggplot(weather_condition_night, aes(x = Night.Weather, y = Count, fill = City)) 
 ```
 
 ```{r}
-# Compare average temperatures across cities
-ggplot(data, aes(x = City, y = Day.Temp, fill = City)) +
-  geom_boxplot() +
-  labs(title = "Comparison of Day Temperatures Across Cities", y = "Day Temperature (℃)") +
-  theme_minimal()
+day_weather_counts <- data %>%
+  group_by(City, Season, Day.Weather) %>%
+  tally() %>%
+  ungroup()
 
-# Compare average wind force across cities
-ggplot(data, aes(x = City, y = Day.Wind.Force, fill = City)) +
-  geom_boxplot() +
-  labs(title = "Comparison of Day Wind Force Across Cities", y = "Day Wind Force") +
-  theme_minimal()
+night_weather_counts <- data %>%
+  group_by(City, Season, Night.Weather) %>%
+  tally() %>%
+  ungroup()
 
-# ANOVA to test if there are significant differences in temperatures across cities
-anova_result <- aov(Day.Temp ~ City, data = data)
-summary(anova_result)
+# Function to plot pie chart for weather conditions by city and season
+plot_pie_chart <- function(data, city, season, weather_column, title) {
+  city_season_data <- data %>% filter(City == city & Season == season)
+  p <- ggplot(city_season_data, aes(x = "", y = n, fill = !!sym(weather_column))) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = paste(title, "for", city, "-", season), fill = weather_column) +
+    theme_void() +
+    theme(legend.position = "right",  # Move legend outside the plot
+          legend.title = element_text(size = 10), # Adjust the legend title size
+          legend.text = element_text(size = 8))   # Adjust the legend text size
+  return(p)
+}
+
+# Loop through cities and seasons to plot pie charts for Day and Night weather conditions
+cities <- unique(data$City)
+seasons <- unique(data$Season)
+
+for (city in cities) {
+  for (season in seasons) {
+    # Day Weather Pie Chart
+    day_plot <- plot_pie_chart(day_weather_counts, city, season, "Day.Weather", "Day Weather Condition")
+    print(day_plot)
+    
+    # Night Weather Pie Chart
+    night_plot <- plot_pie_chart(night_weather_counts, city, season, "Night.Weather", "Night Weather Condition")
+    print(night_plot)
+  }
+}
+```
+
+
+```{r}
+# Plot the value count of each city in the wind force categories
+ggplot(df_long, aes(x = City, fill = Wind_Force_Category)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Wind Force Category Counts by City",
+       x = "City",
+       y = "Count",
+       fill = "Wind Force Category") +
+  theme_minimal()
+```
+
+```{r}
+
+# Count the occurrences of wind force by City and Season
+day_wind_force_counts <- data %>%
+  group_by(City, Season, Day_Wind_Force_Category) %>%
+  tally() %>%
+  ungroup()
+
+night_wind_force_counts <- data %>%
+  group_by(City, Season, Night_Wind_Force_Category) %>%
+  tally() %>%
+  ungroup()
+
+# Function to plot pie chart for weather conditions or wind force by city and season
+plot_pie_chart <- function(data, city, season, weather_column, title) {
+  city_season_data <- data %>% filter(City == city & Season == season)
+  p <- ggplot(city_season_data, aes(x = "", y = n, fill = !!sym(weather_column))) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = paste(title, "for", city, "-", season), fill = weather_column) +
+    theme_void() +
+    theme(legend.position = "right",  # Move legend outside the plot
+          legend.title = element_text(size = 10), # Adjust the legend title size
+          legend.text = element_text(size = 8))   # Adjust the legend text size
+  return(p)
+}
+
+# Loop through cities and seasons to plot pie charts for Day and Night weather conditions and wind force
+cities <- unique(data$City)
+seasons <- unique(data$Season)
+
+for (city in cities) {
+  for (season in seasons) {
+    # Day Wind Force Pie Chart
+    day_wind_plot <- plot_pie_chart(day_wind_force_counts, city, season, "Day_Wind_Force_Category", "Day Wind Force")
+    print(day_wind_plot)
+    
+    # Night Wind Force Pie Chart
+    night_wind_plot <- plot_pie_chart(night_wind_force_counts, city, season, "Night_Wind_Force_Category", "Night Wind Force")
+    print(night_wind_plot)
+  }
+}
 ```
 
