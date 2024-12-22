@@ -1,107 +1,145 @@
+---
+title: "Prokect"
+author: "Qingdian Luo 2021013514"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
 ```{r}
-# 加载所需的库
-library(tidyverse)
-library(lubridate)
+# Load libraries
 library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(tidyr)
 
-# 读取数据
-data <- read.csv("Weather_Data_All_Cities.csv")
+# Read the data from CSV
+data <- read.csv("data.csv")
 
-# 查看数据结构
-head(data)
+# Convert Date to Date format
+data$Date <- as.Date(data$Date)
 
-# 1. 数据清洗
+# Extract month and year for time-based analysis
+data$Year <- year(data$Date)
+data$Month <- month(data$Date)
 
-# 1.1 处理日期数据
-data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
-
-# 1.2 清理天气数据，分为白天和夜间的天气
-data <- data %>%
-  mutate(Day_Weather = strsplit(as.character(Weather.Condition), "/")[[1]][1],
-         Night_Weather = strsplit(as.character(Weather.Condition), "/")[[1]][2])
-
-# 1.3 清理温度数据，去除单位，转换为数值类型
-data <- data %>%
-  mutate(Day_Temperature = as.numeric(gsub("℃", "", strsplit(as.character(Temperature), "/")[[1]][1])),
-         Night_Temperature = as.numeric(gsub("℃", "", strsplit(as.character(Temperature), "/")[[1]][2])))
-
-# 1.4 清理风力和风向数据，分为白天和夜间的风力风向
-data <- data %>%
-  mutate(Day_Wind_Force = strsplit(as.character(`Wind Force and Direction`), "/")[[1]][1],
-         Night_Wind_Force = strsplit(as.character(`Wind Force and Direction`), "/")[[1]][2])
-
-# 1.5 提取风向数据
-data$Day_Wind_Direction <- gsub("\\d+", "", data$Day_Wind_Force)
-data$Night_Wind_Direction <- gsub("\\d+", "", data$Night_Wind_Force)
-
-# 查看数据清洗后的效果
-head(data)
-
-# 2. 数据分析 (EDA)
-
-# 2.1 基本统计描述
-summary(data)
-
-# 2.2 温度数据的描述性统计
-summary(data$Day_Temperature)
-summary(data$Night_Temperature)
-
-# 2.3 计算温度之间的相关性
-cor(data$Day_Temperature, data$Night_Temperature, use = "complete.obs")
-
-# 2.4 按城市分组的统计分析
-city_weather_summary <- data %>%
-  group_by(City) %>%
-  summarise(Avg_Day_Temperature = mean(Day_Temperature, na.rm = TRUE),
-            Avg_Night_Temperature = mean(Night_Temperature, na.rm = TRUE),
-            Most_Common_Day_Weather = Mode(Day_Weather),   # Mode 是找众数的函数，需要你自己定义
-            Most_Common_Night_Weather = Mode(Night_Weather))
-
-print(city_weather_summary)
-
-# 2.5 风力风向的分布
-ggplot(data, aes(x = Day_Wind_Force)) +
-  geom_bar() +
-  ggtitle("Day Wind Force Distribution")
-
-ggplot(data, aes(x = Night_Wind_Force)) +
-  geom_bar() +
-  ggtitle("Night Wind Force Distribution")
-
-# 2.6 温度变化趋势 (时间序列分析)
-ggplot(data, aes(x = Date)) +
-  geom_line(aes(y = Day_Temperature, color = "Day Temp")) +
-  geom_line(aes(y = Night_Temperature, color = "Night Temp")) +
-  labs(title = "Temperature Trend Over Time", x = "Date", y = "Temperature (°C)") +
-  scale_color_manual(name = "Temperature", values = c("Day Temp" = "blue", "Night Temp" = "red"))
-
-# 2.7 不同城市的温度分布
-ggplot(data, aes(x = Day_Temperature, fill = City)) +
-  geom_histogram(binwidth = 2, alpha = 0.6, position = "identity") +
-  ggtitle("Day Temperature Distribution by City")
-
-# 2.8 白天和夜间天气情况的条形图
-ggplot(data, aes(x = Day_Weather)) +
-  geom_bar() +
-  ggtitle("Day Weather Distribution")
-
-ggplot(data, aes(x = Night_Weather)) +
-  geom_bar() +
-  ggtitle("Night Weather Distribution")
-
-# 3. 风力风向的分析
-
-# 3.1 风向数据统计
-day_wind_direction_count <- table(data$Day_Wind_Direction)
-night_wind_direction_count <- table(data$Night_Wind_Direction)
-
-print(day_wind_direction_count)
-print(night_wind_direction_count)
-
-# 4. 提示：你可以自定义“众数”函数
-# 用于统计每个变量的众数
-Mode <- function(x) {
-  uniqx <- unique(x)
-  uniqx[which.max(tabulate(match(x, uniqx)))]
-}
+# For temperature, you may need to clean/remove the "℃" symbol and convert them to numeric values
+data$Day.Temp <- as.numeric(gsub("℃", "", data$Day.Temp))
+data$Night.Temp <- as.numeric(gsub("℃", "", data$Night.Temp))
 ```
+
+
+```{r}
+# Summary statistics for temperature (Day and Night)
+summary_stats <- data %>%
+  group_by(City) %>%
+  summarise(
+    Day_Temperature_Mean = mean(Day.Temp, na.rm = TRUE),
+    Night_Temperature_Mean = mean(Night.Temp, na.rm = TRUE),
+    Day_Temperature_Median = median(Day.Temp, na.rm = TRUE),
+    Night_Temperature_Median = median(Night.Temp, na.rm = TRUE),
+    Day_Temperature_Min = min(Day.Temp, na.rm = TRUE),
+    Night_Temperature_Min = min(Night.Temp, na.rm = TRUE),
+    Day_Temperature_Max = max(Day.Temp, na.rm = TRUE),
+    Night_Temperature_Max = max(Night.Temp, na.rm = TRUE)
+  )
+print(summary_stats)
+
+# Summary statistics for Wind Force
+# Assuming you have numerical values for wind force, otherwise, you might need to convert them
+# For simplicity, we assume a placeholder conversion function for wind force (e.g., '≤3级' as 3).
+data$Day.Wind.Force <- gsub("级", "", data$Day.Wind.Force)
+data$Night.Wind.Force <- gsub("级", "", data$Night.Wind.Force)
+
+# Convert wind force to numeric (assumes categories like '≤3级', '3-4级', etc.)
+data$Day.Wind.Force <- as.numeric(ifelse(data$Day.Wind.Force == "≤3", 3, ifelse(data$Day.Wind.Force == "3-4", 4, NA)))
+data$Night.Wind.Force <- as.numeric(ifelse(data$Night.Wind.Force == "≤3", 3, ifelse(data$Night.Wind.Force == "3-4", 4, NA)))
+
+# Wind force summary statistics
+wind_stats <- data %>%
+  group_by(City) %>%
+  summarise(
+    Day_Wind_Force_Mean = mean(Day.Wind.Force, na.rm = TRUE),
+    Night_Wind_Force_Mean = mean(Night.Wind.Force, na.rm = TRUE),
+    
+    
+    Day_Wind_Force_Max = max(Day.Wind.Force, na.rm = TRUE),
+    Night_Wind_Force_Max = max(Night.Wind.Force, na.rm = TRUE)
+  )
+print(wind_stats)
+```
+
+
+```{r}
+# Average temperature by month for each city
+temperature_by_month <- data %>%
+  group_by(City, Month) %>%
+  summarise(
+    Average_Day_Temperature = mean(Day.Temp, na.rm = TRUE),
+    Average_Night_Temperature = mean(Night.Temp, na.rm = TRUE)
+  )
+
+# Plot temperature over time for each city
+ggplot(temperature_by_month, aes(x = Month, y = Average_Day_Temperature, color = City)) +
+  geom_line() +
+  labs(title = "Average Day Temperature by Month for Each City", x = "Month", y = "Average Day Temperature (℃)") +
+  theme_minimal()
+
+# Yearly temperature trend for each city
+temperature_by_year <- data %>%
+  group_by(City, Year) %>%
+  summarise(
+    Average_Day_Temperature = mean(Day.Temp, na.rm = TRUE),
+    Average_Night_Temperature = mean(Night.Temp, na.rm = TRUE)
+  )
+
+# Plot yearly temperature trend
+ggplot(temperature_by_year, aes(x = Year, y = Average_Day_Temperature, color = City)) +
+  geom_line() +
+  labs(title = "Average Day Temperature by Year for Each City", x = "Year", y = "Average Day Temperature (℃)") +
+  theme_minimal()
+```
+
+```{r}
+# Count the occurrences of each weather condition (Day and Night) by city
+weather_condition_day <- data %>%
+  group_by(City, Day.Weather) %>%
+  summarise(Count = n())
+
+weather_condition_night <- data %>%
+  group_by(City, Night.Weather) %>%
+  summarise(Count = n())
+
+# Plot weather condition occurrences (day)
+ggplot(weather_condition_day, aes(x = Day.Weather, y = Count, fill = City)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Weather Condition Occurrences During Day for Each City", x = "Weather Condition", y = "Count") +
+  theme_minimal()
+
+ggplot(weather_condition_night, aes(x = Night.Weather, y = Count, fill = City)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Weather Condition Occurrences During Night for Each City", x = "Weather Condition", y = "Count") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10) # Rotate labels by 45 degrees
+  )
+```
+
+```{r}
+# Compare average temperatures across cities
+ggplot(data, aes(x = City, y = Day.Temp, fill = City)) +
+  geom_boxplot() +
+  labs(title = "Comparison of Day Temperatures Across Cities", y = "Day Temperature (℃)") +
+  theme_minimal()
+
+# Compare average wind force across cities
+ggplot(data, aes(x = City, y = Day.Wind.Force, fill = City)) +
+  geom_boxplot() +
+  labs(title = "Comparison of Day Wind Force Across Cities", y = "Day Wind Force") +
+  theme_minimal()
+
+# ANOVA to test if there are significant differences in temperatures across cities
+anova_result <- aov(Day.Temp ~ City, data = data)
+summary(anova_result)
+```
+
