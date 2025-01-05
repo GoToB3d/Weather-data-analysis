@@ -1,0 +1,144 @@
+---
+title: "rshiny"
+author: "zhongyue"
+date: "`r Sys.Date()`"
+output: html_document
+runtime: shiny
+---
+```{r}
+# 加载必要的库
+library(shiny)
+library(shinydashboard)
+library(dplyr)
+library(ggplot2)
+library(DT)
+
+# 读取数据
+weather_data <- read.csv("D:/zhongyue/学习/大四上/数据科学导论/ds作业/Cleaned_Weather_Data.csv", stringsAsFactors = FALSE)
+weather_data$Date <- as.Date(weather_data$Date, format = "%Y-%m-%d")
+
+# 将天气状况映射为文本
+weather_mapping <- c("晴" = 0, "多云" = 1, "阴" = 2, "小雨" = 3, "中雨" = 4, 
+                     "小雪" = 5, "中雪" = 6, "雨夹雪" = 7, "扬沙" = 8, 
+                     "雷阵雨" = 9, "雾" = 10, "霾" = 11, "阵雨" = 12, "大雨" = 13)
+
+# 逆映射，将数值转换回文本
+reverse_mapping <- names(weather_mapping)
+weather_data$Weather_Text <- reverse_mapping[weather_data$Day_Weather_Encoded + 1]
+
+# 获取可选的城市和年份
+available_cities <- unique(weather_data$City)
+available_years <- unique(format(weather_data$Date, "%Y"))
+
+# UI 部分
+ui <- dashboardPage(
+  dashboardHeader(title = "天气数据展示"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("天气数据展示", tabName = "data_display", icon = icon("cloud")),
+      selectInput("city", "选择城市：", choices = available_cities, selected = available_cities[1]),
+      selectInput("year", "选择年份：", choices = available_years, selected = available_years[1]),
+      selectInput("month", "选择月份：", choices = 1:12, selected = 1)
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(
+        tabName = "data_display",
+        fluidRow(
+          box(
+            title = "天气数据表", status = "primary", solidHeader = TRUE, width = 12,
+            dataTableOutput("weatherTable")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "气温变化趋势", status = "primary", solidHeader = TRUE, width = 12,
+            plotOutput("temperaturePlot", height = "400px")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "风力变化趋势", status = "primary", solidHeader = TRUE, width = 12,
+            plotOutput("windForcePlot", height = "400px")
+          )
+        )
+      )
+    )
+  )
+)
+
+# Server 部分
+server <- function(input, output) {
+  # 根据选择过滤数据
+  filtered_data <- reactive({
+    weather_data %>%
+      filter(City == input$city,
+             format(Date, "%Y") == input$year,
+             format(Date, "%m") == sprintf("%02d", as.numeric(input$month)))
+  })
+  
+  # 显示天气数据表
+  output$weatherTable <- renderDataTable({
+    data <- filtered_data()
+    data %>%
+      select(Date, Day.Temp, Night.Temp, Day_Wind_Force, Night_Wind_Force, Weather_Text) %>%
+      rename(
+        日期 = Date,
+        日最高气温 = Day.Temp,
+        日最低气温 = Night.Temp,
+        日风力 = Day_Wind_Force,
+        夜风力 = Night_Wind_Force,
+        天气状况 = Weather_Text
+      )
+  })
+  
+  # 绘制气温变化趋势图
+  output$temperaturePlot <- renderPlot({
+    data <- filtered_data()
+    
+    if (nrow(data) == 0) {
+      return(NULL)
+    }
+    
+    ggplot(data, aes(x = Date)) +
+      geom_line(aes(y = Day.Temp, color = "日最高气温"), size = 1) +
+      geom_line(aes(y = Night.Temp, color = "日最低气温"), size = 1) +
+      labs(
+        title = paste("城市：", input$city, " | 年份：", input$year, " | 月份：", input$month, " | 气温变化"),
+        x = "日期",
+        y = "气温 (°C)",
+        color = "图例"
+      ) +
+      scale_color_manual(values = c("日最高气温" = "red", "日最低气温" = "blue")) +
+      theme_minimal()
+  })
+  
+  # 绘制风力变化趋势图
+  output$windForcePlot <- renderPlot({
+    data <- filtered_data()
+    
+    if (nrow(data) == 0) {
+      return(NULL)
+    }
+    
+    ggplot(data, aes(x = Date)) +
+      geom_line(aes(y = Day_Wind_Force, color = "日风力"), size = 1) +
+      geom_line(aes(y = Night_Wind_Force, color = "夜风力"), size = 1, linetype = "dashed") +
+      labs(
+        title = paste("城市：", input$city, " | 年份：", input$year, " | 月份：", input$month, " | 风力变化"),
+        x = "日期",
+        y = "风力 (级)",
+        color = "图例"
+      ) +
+      scale_color_manual(values = c("日风力" = "green", "夜风力" = "purple")) +
+      theme_minimal()
+  })
+}
+
+
+# 运行应用
+shinyApp(ui = ui, server = server)
+
+```
+
