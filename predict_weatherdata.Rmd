@@ -1,0 +1,359 @@
+---
+title: "predict"
+author: "zhongyue"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+清洗数据
+```{r}
+library(dplyr)
+library(lubridate)
+
+weather_data <- read.csv("Processed_Beijing_Weather_2022.csv", stringsAsFactors = FALSE)
+
+str(weather_data)
+
+# 清洗数据 ------------------------------------------------------------
+
+# 1. 删除冗余列：Weather Condition, Temperature, Wind Force and Direction
+weather_data <- weather_data %>% 
+  select(-Weather.Condition, -Temperature, -Wind.Force.and.Direction)
+
+# 2. 天气状况的整数编码
+weather_mapping <- c("晴" = 0, "多云" = 1, "阴" = 2, "小雨" = 3,"中雨"=4, "小雪" = 5, "中雪" = 6, "雨夹雪" =7, "扬沙"=8, "雷阵雨"=9, "雾"=10, "霾"=11, "阵雨"=12, "大雨"=13)
+weather_data <- weather_data %>%
+  mutate(
+    Day_Weather_Encoded = weather_mapping[Day.Weather],
+    Night_Weather_Encoded = weather_mapping[Night.Weather]
+  )
+
+# 3. 风力等级取平均值
+extract_wind_force <- function(force) {
+  # 提取风力范围并取平均值
+  numbers <- as.numeric(unlist(strsplit(gsub("≤", "", gsub("级", "", force)), "-")))
+  if (length(numbers) == 1) {
+    return(numbers[1])  # 只有一个值，直接返回
+  } else {
+    return(mean(numbers))  # 取平均值
+  }
+}
+
+weather_data <- weather_data %>%
+  mutate(
+    Day_Wind_Force = sapply(Day.Wind.Force, extract_wind_force),
+    Night_Wind_Force = sapply(Night.Wind.Force, extract_wind_force)
+  )
+
+# 4. 风向使用角度编码
+wind_mapping <- c("北风" = 0, "东北风" = 45, "东风" = 90, "东南风" = 135,
+                  "南风" = 180, "西南风" = 225, "西风" = 270, "西北风" = 315, "无持续风向" = NA)
+weather_data <- weather_data %>%
+  mutate(
+    Day_Wind_Direction = wind_mapping[Day.Wind.Direction],
+    Night_Wind_Direction = wind_mapping[Night.Wind.Direction]
+  )
+
+# 5. 日期特征提取
+weather_data <- weather_data %>%
+  mutate(
+    Date = as.Date(Date, format = "%Y-%m-%d"),  
+    Year = year(Date),                          
+    Month = month(Date),                        
+    Day_Of_Year = yday(Date)                   
+  )
+
+# 6. 删除原始日期列和其他无用字段
+weather_data <- weather_data %>%
+  select(-Day.Weather, -Night.Weather, -Day.Wind.Force, -Night.Wind.Force, -Day.Wind.Direction, -Night.Wind.Direction)
+
+write.csv(weather_data, "Cleaned_Weather_Data_Beijing_2022.csv", row.names = FALSE)
+
+# head(weather_data)
+
+```
+
+天气状况预测-随机森林
+```{r}
+library(randomForest)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+
+# ---- 数据加载和处理 ----
+# 读取训练数据
+weather_data <- read.csv("Cleaned_Weather_Data.csv", stringsAsFactors = FALSE)
+
+# 读取实际数据（2022年，用于验证）
+actual_weather_data <- read.csv("Cleaned_Weather_Data_Beijing_2022.csv", stringsAsFactors = FALSE)
+
+# 转换日期格式
+weather_data$Date <- as.Date(weather_data$Date, format = "%Y-%m-%d")
+actual_weather_data$Date <- as.Date(actual_weather_data$Date, format = "%Y-%m-%d")
+
+# 筛选北京数据
+beijing_data <- weather_data %>% filter(City == "beijing")
+
+
+# 准备训练数据，选取相关特征
+train_data <- beijing_data %>%
+  select(Day_Weather_Encoded, Day.Temp, Night.Temp, Day_Wind_Force, Night_Wind_Force)
+
+# 准备测试数据，选取相关特征
+test_data <- actual_weather_data %>%
+  select(Date, Day_Weather_Encoded, Day.Temp, Night.Temp, Day_Wind_Force, Night_Wind_Force)
+
+train_data <- train_data %>%
+  mutate(
+    Day_Temp = ifelse(is.na(Day.Temp), median(Day.Temp, na.rm = TRUE), Day.Temp),
+    Night_Temp = ifelse(is.na(Night.Temp), median(Night.Temp, na.rm = TRUE), Night.Temp),
+    Day_Wind_Force = ifelse(is.na(Day_Wind_Force), median(Day_Wind_Force, na.rm = TRUE), Day_Wind_Force),
+    Night_Wind_Force = ifelse(is.na(Night_Wind_Force), median(Night_Wind_Force, na.rm = TRUE), Night_Wind_Force)
+  )
+train_data <- train_data %>% drop_na()
+# 检查是否有缺失值
+if (any(is.na(train_data)) || any(is.na(test_data))) {
+  stop("Error: Missing values detected in the data. Please handle missing values before training.")
+}
+
+# ---- 模型训练 ----
+# 创建随机森林模型
+set.seed(42)  # 设置随机种子以保证结果可复现
+rf_model <- randomForest(
+  Day_Weather_Encoded ~ Day.Temp + Night.Temp + Day_Wind_Force + Night_Wind_Force,
+  data = train_data,
+  ntree = 1000,  # 树的数量
+  importance = TRUE  # 计算特征重要性
+)
+
+# 查看模型性能
+print(rf_model)
+varImpPlot(rf_model)  # 特征重要性可视化
+
+# ---- 模型预测 ----
+# 使用测试数据进行预测
+test_data$Predicted_Weather <- predict(rf_model, newdata = test_data)
+
+# ---- 结果可视化 ----
+# 天气状况映射表
+weather_mapping <- c("晴" = 0, "多云" = 1, "阴" = 2, "小雨" = 3, "中雨" = 4, "小雪" = 5, 
+                     "中雪" = 6, "雨夹雪" = 7, "扬沙" = 8, "雷阵雨" = 9, "雾" = 10, 
+                     "霾" = 11, "阵雨" = 12, "大雨" = 13)
+reverse_mapping <- names(weather_mapping)
+
+# 添加实际天气和预测天气的文字描述
+test_data$Actual_Weather <- reverse_mapping[test_data$Day_Weather_Encoded + 1]
+test_data$Predicted_Weather_Label <- reverse_mapping[test_data$Predicted_Weather + 1]
+
+# 按日期绘制实际和预测的对比图
+comparison_data <- test_data %>%
+  select(Date, Actual_Weather, Predicted_Weather_Label) %>%
+  pivot_longer(cols = c(Actual_Weather, Predicted_Weather_Label),
+               names_to = "Type", values_to = "Weather")
+
+ggplot(comparison_data, aes(x = Date, y = Weather, color = Type)) +
+  geom_point(size = 2) +
+  labs(
+    title = "Actual vs Predicted Weather Conditions (2022)",
+    x = "Date",
+    y = "Weather Condition",
+    color = "Legend"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ---- 绘制全年热力图 ----
+# 添加月份和日期信息
+test_data$Month <- month(test_data$Date, label = TRUE, abbr = FALSE)
+test_data$Day <- day(test_data$Date)
+
+# 设置颜色映射表
+weather_colors <- c("多云" = "yellow", "晴" = "gray", "阴" = "darkgray", "小雨" = "blue", 
+                    "中雨" = "dodgerblue4", "小雪" = "lightblue", "中雪" = "slateblue", 
+                    "雨夹雪" = "pink", "扬沙" = "tan", "雷阵雨" = "purple", "雾" = "mistyrose", 
+                    "霾" = "brown", "阵雨" = "cyan", "大雨" = "darkblue")
+
+# 绘制预测天气热力图
+p_forecast_heatmap <- ggplot(test_data, aes(x = Day, y = Month, fill = Predicted_Weather_Label)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = weather_colors) +
+  labs(
+    title = "Predicted Weather Conditions Heatmap (2022)",
+    x = "Day of Month",
+    y = "Month",
+    fill = "Weather"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10),  
+    axis.text.y = element_text(size = 10),  
+    panel.grid = element_blank(),           
+    plot.title = element_text(hjust = 0.5)  
+  )
+
+# 保存预测热力图
+ggsave("Beijing_Predicted_Weather_Heatmap_2022.png", plot = p_forecast_heatmap, width = 12, height = 10)
+
+# 绘制实际天气热力图
+p_actual_heatmap <- ggplot(test_data, aes(x = Day, y = Month, fill = Actual_Weather)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = weather_colors) +
+  labs(
+    title = "Actual Weather Conditions Heatmap (2022)",
+    x = "Day of Month",
+    y = "Month",
+    fill = "Weather"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 10),  
+    axis.text.y = element_text(size = 10),  
+    panel.grid = element_blank(),           
+    plot.title = element_text(hjust = 0.5)  
+  )
+
+# 保存实际热力图
+ggsave("Beijing_Actual_Weather_Heatmap_2022.png", plot = p_actual_heatmap, width = 12, height = 10)
+
+```
+
+预测夜间温度 (Night.Temp)
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(Metrics)
+library(randomForest)
+
+# Load the datasets
+train_data_path <- "Cleaned_Weather_Data.csv"
+test_data_path <- "Cleaned_Weather_Data_Beijing_2022.csv"
+train_data <- read_csv(train_data_path)
+test_data <- read_csv(test_data_path)
+
+# ---- Data Preparation ----
+# Standardize column names and filter missing values
+train_data <- train_data %>%
+  rename_with(~ gsub("\\.", "_", .)) %>%
+  mutate(Date = as.Date(Date, format = "%Y/%m/%d")) %>%
+  filter(!is.na(Night_Temp) & !is.na(Day_Temp) & !is.na(Day_Wind_Force) & !is.na(Night_Wind_Force))
+
+test_data <- test_data %>%
+  rename_with(~ gsub("\\.", "_", .)) %>%
+  mutate(Date = as.Date(Date, format = "%Y/%m/%d")) %>%
+  filter(!is.na(Night_Temp) & !is.na(Day_Temp) & !is.na(Day_Wind_Force) & !is.na(Night_Wind_Force))
+
+# ---- Train the Model ----
+# Train a Random Forest model for Night_Temp
+rf_night_temp <- randomForest(
+  Night_Temp ~ Day_Temp + Day_Wind_Force + Night_Wind_Force,
+  data = train_data,
+  ntree = 1000,
+  importance = TRUE
+)
+
+# ---- Predict ----
+# Predict on test_data
+test_data$Predicted_Night_Temp <- predict(rf_night_temp, newdata = test_data)
+
+# ---- Evaluation ----
+# Calculate RMSE and MAE
+rmse_night_temp <- rmse(test_data$Night_Temp, test_data$Predicted_Night_Temp)
+mae_night_temp <- mae(test_data$Night_Temp, test_data$Predicted_Night_Temp)
+cat("Night_Temp RMSE:", rmse_night_temp, "\n")
+cat("Night_Temp MAE:", mae_night_temp, "\n")
+
+# ---- Visualization ----
+# Prepare data for plotting
+plot_night_temp <- test_data %>%
+  select(Date, Night_Temp, Predicted_Night_Temp) %>%
+  pivot_longer(cols = c(Night_Temp, Predicted_Night_Temp),
+               names_to = "Type",
+               values_to = "Temperature") %>%
+  mutate(Type = ifelse(Type == "Night_Temp", "Actual", "Predicted"))
+
+# Plot actual vs predicted Night_Temp
+p <- ggplot(plot_night_temp, aes(x = Date, y = Temperature, color = Type)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Actual vs Predicted Night Temperature",
+    x = "Month",
+    y = "Night Temperature (°C)",
+    color = "Legend"
+  ) +
+  scale_x_date(
+    date_breaks = "1 month",  
+    date_labels = "%m月"      
+  ) +
+  scale_color_manual(values = c("Actual" = "blue", "Predicted" = "red")) +
+  theme_minimal()
+
+  ggsave(filename = paste0("Beijing_2022_nighttemp_predict.png"), plot = p, width = 8, height = 6)
+```
+
+预测白天温度 (Day.Temp)
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(Metrics)
+
+train_data_path <- "Cleaned_Weather_Data.csv"
+test_data_path <- "Cleaned_Weather_Data_Beijing_2022.csv"
+train_data <- read_csv(train_data_path)
+test_data <- read_csv(test_data_path)
+
+train_data <- train_data %>%
+  rename_with(~ gsub("\\.", "_", .)) %>% # Replace '.' with '_'
+  mutate(Date = as.Date(Date, format = "%Y/%m/%d")) %>%
+  filter(!is.na(Day_Temp) & !is.na(Night_Temp) & !is.na(Day_Wind_Force))
+
+test_data <- test_data %>%
+  rename_with(~ gsub("\\.", "_", .)) %>% # Replace '.' with '_'
+  mutate(Date = as.Date(Date, format = "%Y/%m/%d")) %>%
+  filter(!is.na(Day_Temp) & !is.na(Night_Temp) & !is.na(Day_Wind_Force))
+
+# ---- Train the Model ----
+# Train a Linear Regression model for Day_Temp
+lm_day_temp <- lm(Day_Temp ~ Night_Temp + Day_Wind_Force, data = train_data)
+
+# ---- Predict ----
+# Predict on test_data
+test_data$Predicted_Day_Temp <- predict(lm_day_temp, newdata = test_data)
+
+# ---- Evaluation ----
+# Calculate RMSE and MAE
+rmse_day_temp <- rmse(test_data$Day_Temp, test_data$Predicted_Day_Temp)
+mae_day_temp <- mae(test_data$Day_Temp, test_data$Predicted_Day_Temp)
+cat("Day_Temp RMSE:", rmse_day_temp, "\n")
+cat("Day_Temp MAE:", mae_day_temp, "\n")
+
+# ---- Visualization ----
+# Prepare data for plotting
+plot_data <- test_data %>%
+  select(Date, Day_Temp, Predicted_Day_Temp) %>%
+  pivot_longer(cols = c(Day_Temp, Predicted_Day_Temp),
+               names_to = "Type",
+               values_to = "Temperature") %>%
+  mutate(Type = ifelse(Type == "Day_Temp", "Actual", "Predicted"))
+
+# Plot actual vs predicted Day_Temp with legend
+p<-ggplot(plot_data, aes(x = Date, y = Temperature, color = Type)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Actual vs Predicted Day Temperature",
+    x = "Month",
+    y = "Day Temperature (°C)",
+    color = "Legend"  # Add legend title
+  ) +
+  scale_x_date(
+    date_breaks = "1 month",  
+    date_labels = "%m月"      
+  ) +
+  scale_color_manual(values = c("Actual" = "blue", "Predicted" = "red")) +  
+  theme_minimal()
+
+  ggsave(filename = paste0("Beijing_2022_daytemp_predict.png"), plot = p, width = 8, height = 6)
+```
